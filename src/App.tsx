@@ -32,6 +32,7 @@ const TRANSLATIONS = {
     howToPlayTitle: "How to play:",
     howToPlayDesc: "Master your hand gestures to solve puzzles, catch nodes, and survive laser beams! <br/> <span class=\"text-white font-medium underline\">Pinch, Move, and Gesture</span> to interact with the digital world.",
     connectingCamera: "INITIALIZING SENSORS...",
+    cameraError: "No camera found. Please check connections & permissions.",
     startGame: "START GAME",
     winTitleSingle: "MISSION COMPLETED!",
     winTitleMulti: "PLAYER {id} WINS!",

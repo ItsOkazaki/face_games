@@ -53,7 +53,14 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     playersRef.current = players;
   }, [mode, isActive, translations, gameType, gameColor]);
 
+  // Stable state for loop to check isActive without restarting everything
+  const isActiveRef = useRef(isActive);
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+
   const drawSkeleton = useCallback((ctx: CanvasRenderingContext2D, landmarks: Point[], color: string) => {
+    // ... stays the same
     ctx.save();
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
@@ -81,20 +88,14 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
   const runLoop = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d', { willReadFrequently: true });
-    if (!canvas || !ctx) return;
+    const video = videoRef.current;
+    if (!canvas || !ctx || !video) return;
 
-    const handsResults = latestHands.current;
-    const faceResults = latestFace.current;
-    const poseResults = latestPose.current;
-
-    // We still need at least handsResults to get the base image for background
-    // but in sandbox it might be different. 
-    // Actually results.image is shared if they are from the same frame.
-    // For now, if no image, we skip.
-    const image = handsResults?.image || faceResults?.image || poseResults?.image;
+    // Use video element directly if results don't have the image yet
+    const image = latestHands.current?.image || latestFace.current?.image || latestPose.current?.image || (video.readyState >= 2 ? video : null);
     if (!image) return;
 
-    if (!isReady) {
+    if (!isReady && video.readyState >= 2) {
       setIsReady(true);
       onCameraReady();
     }
@@ -103,7 +104,16 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const canvasRatio = canvas.width / canvas.height;
-    const videoRatio = image.width / image.height;
+    // Handle both HTMLVideoElement and HTMLCanvasElement/ImageBitmap
+    const imgWidth = (image as any).videoWidth || (image as any).width;
+    const imgHeight = (image as any).videoHeight || (image as any).height;
+    
+    if (!imgWidth || !imgHeight) {
+      ctx.restore();
+      return;
+    };
+
+    const videoRatio = imgWidth / imgHeight;
     let dw, dh, dx, dy;
 
     if (canvasRatio > videoRatio) {
@@ -135,6 +145,7 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
 
     // Map Hand landmarks
     const mappedHands: Point[][] = [];
+    const handsResults = latestHands.current;
     if (handsResults?.multiHandLandmarks) {
       for (const landmarks of handsResults.multiHandLandmarks) {
         mappedHands.push(landmarks.map(mapLM));
@@ -143,19 +154,21 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
 
     // Map Face landmarks
     let mappedFace: Point[] = [];
+    const faceResults = latestFace.current;
     if (faceResults?.multiFaceLandmarks?.[0]) {
       mappedFace = faceResults.multiFaceLandmarks[0].map(mapLM);
     }
 
     // Map Pose landmarks
     let mappedPose: Point[] = [];
+    const poseResults = latestPose.current;
     if (poseResults?.poseLandmarks) {
       mappedPose = poseResults.poseLandmarks.map(mapLM);
     }
 
     const players = playersRef.current;
     
-    if (isActive && players.length > 0) {
+    if (isActiveRef.current && players.length > 0) {
       // Divider
       if (mode === 'multi') {
         ctx.save();
@@ -214,7 +227,7 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     } else {
       mappedHands.forEach(hand => drawSkeleton(ctx, hand, "#FFFFFF"));
     }
-  }, [mode, isActive, isReady, onCameraReady, onWin, drawSkeleton, gameColor]);
+  }, [mode, isReady, onCameraReady, onWin, drawSkeleton, gameColor]);
 
   useEffect(() => {
     // Hands
@@ -242,8 +255,22 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     poseRef.current = pose;
 
     let requestRef: number;
-    const animate = () => {
+    const animate = async () => {
       runLoop();
+      
+      // If the official Camera utility failed or is missing, pump frames manually
+      if (!cameraRef.current && videoRef.current && videoRef.current.readyState >= 2) {
+        try {
+          await Promise.all([
+            hands.send({ image: videoRef.current }),
+            faceMesh.send({ image: videoRef.current }),
+            pose.send({ image: videoRef.current })
+          ]);
+        } catch (e) {
+          // Ignore processing errors
+        }
+      }
+      
       requestRef = requestAnimationFrame(animate);
     };
 
@@ -259,28 +286,37 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
                   pose.send({ image: videoRef.current })
                 ]);
               } catch (e) {
-                console.warn("Mediapipe frame drop:", e);
+                // console.warn("Mediapipe frame drop:", e);
               }
             }
           },
-          // Using more standard dimensions or removing strictly forced 1280x720 
-          // which can fail on front-facing mobile cameras that only support 480p or 1080p
-          width: 640, 
-          height: 480
+          // No fixed width/height constraint - let the browser decide what's best for the device
         });
         
-        camera.start().catch(err => {
-          console.error("Camera.start() failed:", err);
-          // Try one more time with zero constraints if previous failed
-          if (videoRef.current) {
-            navigator.mediaDevices.getUserMedia({ video: true })
-              .then(stream => {
-                if (videoRef.current) videoRef.current.srcObject = stream;
+        camera.start()
+          .then(() => {
+            cameraRef.current = camera;
+          })
+          .catch(err => {
+            console.error("Camera.start() failed:", err);
+            // Relaxed Fallback
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+              navigator.mediaDevices.getUserMedia({ 
+                video: true 
               })
-              .catch(e => console.error("Ultimate camera fallback failed:", e));
-          }
-        });
-        cameraRef.current = camera;
+              .then(stream => {
+                if (videoRef.current) {
+                  videoRef.current.srcObject = stream;
+                  videoRef.current.play().catch(pErr => console.error("Video play error:", pErr));
+                }
+              })
+              .catch(e => {
+                console.error("Final camera fallback failed:", e);
+                alert("CRITICAL: No camera device detected. Please ensure your camera is plugged in and accessible by the browser.");
+              });
+            }
+          });
+          
         requestRef = requestAnimationFrame(animate);
       } catch (err) {
         console.error("Critical camera setup error:", err);
@@ -304,7 +340,7 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
       poseRef.current?.close();
       cancelAnimationFrame(requestRef);
     };
-  }, [runLoop]);
+  }, [runLoop, onCameraReady, onWin, mode]);
 
   return (
     <>

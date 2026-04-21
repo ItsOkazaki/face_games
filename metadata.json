@@ -1,6 +1,6 @@
 {
-  "name": "Your Face Puzzle",
-  "description": "A hand-controlled puzzle game where you use your face as the puzzle. Snapshot your face and arrange the pieces using hand gestures.",
+  "name": "Mostapha Mini-Games",
+  "description": "An advanced suite of gesture-driven mini-games by Rahmani Mostapha. Features Face Puzzle, Quantum Pop, Laser Dodge, and a full Tracking Sandbox Lab.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["hand-tracking", "camera-interaction"]
 }
