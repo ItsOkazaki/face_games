@@ -12,9 +12,11 @@ interface PuzzleGameProps {
   translations: Translations;
   gameType: GameType;
   gameColor: string;
+  sandboxTracker: 'hands' | 'face' | 'pose';
+  onSandboxTrackerChange: (tracker: 'hands' | 'face' | 'pose') => void;
 }
 
-export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, translations, gameType, gameColor }: PuzzleGameProps) {
+export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, translations, gameType, gameColor, sandboxTracker, onSandboxTrackerChange }: PuzzleGameProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef<Player[]>([]);
@@ -203,8 +205,8 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
       const p1Pose = mode === 'single' ? mappedPose : (mappedPose.length > 0 && (mappedPose[0].x < canvas.width / 2) ? mappedPose : []);
       const p2Pose = mode === 'multi' && mappedPose.length > 0 && (mappedPose[0].x >= canvas.width / 2) ? mappedPose : [];
 
-      if (players[0]) players[0].update(p1Hands, ctx, onWin, p1Face, p1Pose);
-      if (players[1]) players[1].update(p2Hands, ctx, onWin, p2Face, p2Pose);
+      if (players[0]) players[0].update(p1Hands, ctx, onWin, p1Face, p1Pose, onSandboxTrackerChange);
+      if (players[1]) players[1].update(p2Hands, ctx, onWin, p2Face, p2Pose, onSandboxTrackerChange);
 
       // Synced start
       if (mode === 'multi') {
@@ -269,21 +271,35 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.setOptions({ 
+      maxNumHands: mode === 'single' ? 1 : 2, 
+      modelComplexity: 0, 
+      minDetectionConfidence: 0.5, 
+      minTrackingConfidence: 0.5 
+    });
     hands.onResults((results) => { latestHands.current = results; });
     handsRef.current = hands;
 
     const faceMesh = new FaceMesh({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
-    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.setOptions({ 
+      maxNumFaces: 1, 
+      refineLandmarks: false, 
+      minDetectionConfidence: 0.5, 
+      minTrackingConfidence: 0.5 
+    });
     faceMesh.onResults((results) => { latestFace.current = results; });
     faceMeshRef.current = faceMesh;
 
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
-    pose.setOptions({ modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.setOptions({ 
+      modelComplexity: 0, 
+      minDetectionConfidence: 0.5, 
+      minTrackingConfidence: 0.5 
+    });
     pose.onResults((results) => { latestPose.current = results; });
     poseRef.current = pose;
 
@@ -295,20 +311,29 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
       if (video && video.readyState >= 2 && !processingRef.current) {
         processingRef.current = true;
         try {
-          // Sequential processing to save CPU and ensure stability
-          // Hands are highest priority for this app
-          await hands.send({ image: video });
+          // Dynamic sensor activation based on current props (avoiding effect restart)
+          const needsHands = gameType !== 'dodge' || (gameType === 'sandbox' && sandboxTracker === 'hands');
+          const needsFace = gameType === 'puzzle' || gameType === 'dodge' || (gameType === 'sandbox' && sandboxTracker === 'face');
+          const needsPose = gameType === 'sandbox' && sandboxTracker === 'pose';
+
+          const tasks = [];
+          if (needsHands) tasks.push(hands.send({ image: video }));
           
-          // Throttled face/pose to prevent UI lag
           frameCountRef.current++;
-          if (frameCountRef.current % 2 === 0) {
-            await faceMesh.send({ image: video });
+          
+          if (needsFace && (frameCountRef.current % 2 === 0 || gameType === 'dodge')) {
+             tasks.push(faceMesh.send({ image: video }));
           }
-          if (frameCountRef.current % 5 === 0) {
-            await pose.send({ image: video });
+          
+          if (needsPose && frameCountRef.current % 3 === 0) {
+             tasks.push(pose.send({ image: video }));
+          }
+
+          if (tasks.length > 0) {
+            await Promise.all(tasks);
           }
         } catch (e) {
-          console.error("Detection error:", e);
+          // console.warn("Sensor lag:", e);
         } finally {
           processingRef.current = false;
         }

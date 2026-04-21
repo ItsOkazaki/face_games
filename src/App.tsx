@@ -30,7 +30,7 @@ const TRANSLATIONS = {
     modeSingleDesc: "Challenge yourself across various mini-games as fast as possible.",
     modeMultiDesc: "Compete with a friend! Race to see who's the fastest.",
     howToPlayTitle: "How to play:",
-    howToPlayDesc: "Master your hand gestures to solve puzzles, catch nodes, and survive laser beams! <br/> <span class=\"text-white font-medium underline\">Pinch, Move, and Gesture</span> to interact with the digital world.",
+    howToPlayDesc: "Master your hand gestures to solve puzzles, catch nodes, and survive laser beams! <br/> <span class=\"text-white font-medium underline\">Pinch, Move, and Gesture</span> to interact with the digital world. <br/><br/><span class='text-cyan-400 text-[10px] font-bold'>⚡ PERFORMANCE TIP: Use a well-lit room for best tracking results.</span>",
     connectingCamera: "INITIALIZING SENSORS...",
     cameraError: "No camera found. Please check connections & permissions.",
     startGame: "START GAME",
@@ -54,7 +54,7 @@ const TRANSLATIONS = {
     modeSingleDesc: "تحدَّ نفسك في مختلف الألعاب المصغرة بأسرع ما يمكن.",
     modeMultiDesc: "نافس صديقك! تسابق لمعرفة من الأسرع.",
     howToPlayTitle: "كيفية اللعب:",
-    howToPlayDesc: "أتقن إيماءات يدك لحل الألغاز، والتقاط العقد، والبقاء على قيد الحياة تحت أشعة الليزر! <br/> <span class=\"text-white font-medium underline\">اقرص، حرك، وأشر</span> للتفاعل مع العالم الرقمي.",
+    howToPlayDesc: "أتقن إيماءات يدك لحل الألغاز، والتقاط العقد، والبقاء على قيد الحياة تحت أشعة الليزر! <br/> <span class=\"text-white font-medium underline\">اقرص، حرك، وأشر</span> للتفاعل مع العالم الرقمي. <br/><br/><span class='text-cyan-400 text-[10px] font-bold'>⚡ نصيحة للأداء: استخدم غرفة ذات إضاءة جيدة للحصول على أفضل نتائج تتبع.</span>",
     connectingCamera: "جاري تهيئة الحساسات...",
     cameraError: "لم يتم العثور على كاميرا. يرجى التحقق من التوصيلات والأذونات.",
     startGame: "ابدأ اللعبة",
@@ -118,6 +118,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [winner, setWinner] = useState<Player | null>(null);
   const [winImage, setWinImage] = useState<string | null>(null);
+  const [sandboxTracker, setSandboxTracker] = useState<'hands' | 'face' | 'pose'>('hands');
 
   const t = useMemo(() => TRANSLATIONS[language], [language]);
   const isRTL = language === 'ar';
@@ -195,6 +196,8 @@ export default function App() {
         translations={t}
         gameType={selectedGame}
         gameColor={activeGame.color}
+        sandboxTracker={sandboxTracker}
+        onSandboxTrackerChange={setSandboxTracker}
       />
 
       <MouseTrail />

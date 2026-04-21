@@ -152,7 +152,7 @@ export class Player {
     this.gameType = gameType;
   }
 
-  update(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void, faceData?: Point[], poseData?: Point[]) {
+  update(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void, faceData?: Point[], poseData?: Point[], onTrackerChange?: (t: SandboxTracker) => void) {
     if (this.state === 'CALIBRATING') {
       this.handleCalibration(handsData, ctx);
     } else if (this.state === 'WAITING') {
@@ -178,7 +178,7 @@ export class Player {
           this.handleDodgeGame(handsData, ctx, onWin, faceMeshToPoint(faceData));
           break;
         case 'sandbox':
-          this.handleSandboxMode(handsData, ctx, faceData, poseData);
+          this.handleSandboxMode(handsData, ctx, faceData, poseData, onTrackerChange);
           break;
       }
     } else if (this.state === 'LOSE') {
@@ -630,7 +630,7 @@ export class Player {
     }
   }
 
-  handleSandboxMode(handsData: Point[][], ctx: CanvasRenderingContext2D, faceData?: Point[], poseData?: Point[]) {
+  handleSandboxMode(handsData: Point[][], ctx: CanvasRenderingContext2D, faceData?: Point[], poseData?: Point[], onTrackerChange?: (t: SandboxTracker) => void) {
     this.drawUI(ctx, `CONTROL LAB: SELECT SENSOR`);
     
     const trackers: SandboxTracker[] = ['hands', 'face', 'pose'];
@@ -656,7 +656,10 @@ export class Player {
       if (handsData.length > 0) {
         const tip = handsData[0][8];
         if (tip.x > x && tip.x < x + buttonW && tip.y > y && tip.y < y + 50) {
-          this.sandboxTracker = t;
+          if (this.sandboxTracker !== t) {
+            this.sandboxTracker = t;
+            if (onTrackerChange) onTrackerChange(t);
+          }
         }
       }
     });
