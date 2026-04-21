@@ -46,6 +46,7 @@ export interface Translations {
 }
 
 export type GameType = 'puzzle' | 'pop' | 'trace' | 'catch' | 'strike' | 'dodge' | 'sandbox';
+export type SandboxTracker = 'hands' | 'face' | 'pose';
 
 export interface Target {
   x: number;
@@ -53,6 +54,8 @@ export interface Target {
   r: number;
   id: number;
   alive: boolean;
+  capturedImage?: string;
+  popProgress?: number;
 }
 
 export interface CatchItem {
@@ -60,6 +63,51 @@ export interface CatchItem {
   y: number;
   speed: number;
   id: number;
+  size: number;
+}
+
+export interface StrikeTarget {
+  sector: number;
+  active: boolean;
+  startTime: number;
+}
+
+// Gesture Helpers
+export function getDistance(p1: Point, p2: Point) {
+  return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+}
+
+export function isPinching(hand: Point[]) {
+  return getDistance(hand[4], hand[8]) < PINCH_THRESHOLD;
+}
+
+export function isThumbsUp(hand: Point[]) {
+  const thumbTip = hand[4];
+  const thumbBase = hand[2];
+  const indexTip = hand[8];
+  const middleTip = hand[12];
+  const ringTip = hand[16];
+  const pinkyTip = hand[20];
+  
+  // Thumb is significantly above its base and other fingers are relatively folded
+  const isThumbUpArr = thumbTip.y < thumbBase.y - 20;
+  const palmBase = hand[0];
+  const othersFolded = [indexTip, middleTip, ringTip, pinkyTip].every(tip => getDistance(tip, palmBase) < 120);
+  
+  return isThumbUpArr && othersFolded;
+}
+
+export function isOpenPalm(hand: Point[]) {
+  const palmBase = hand[0];
+  const tips = [4, 8, 12, 16, 20].map(i => hand[i]);
+  // All fingers far from palm base
+  return tips.every(tip => getDistance(tip, palmBase) > 130);
+}
+
+export function faceMeshToPoint(landmarks?: Point[]): Point | null {
+  if (!landmarks || landmarks.length === 0) return null;
+  // Use nose tip or average of eye centers
+  return landmarks[1]; // Nose tip in FaceMesh (index 1 is approx nose tip)
 }
 
 export class Player {
@@ -87,6 +135,13 @@ export class Player {
   traceProgress: number = 0;
   activeSector: number = -1;
   sectorTimer: number = 0;
+  strikeTargets: StrikeTarget[] = [];
+  
+  // Laser Dodge state
+  lasers: { y: number; speed: number; direction: number; gap: number }[] = [];
+  
+  // Sandbox state
+  sandboxTracker: SandboxTracker = 'hands';
 
   constructor(id: number, bounds: Bounds, color: string, mode: 'single' | 'multi', translations: Translations, gameType: GameType = 'puzzle') {
     this.id = id;
@@ -97,7 +152,7 @@ export class Player {
     this.gameType = gameType;
   }
 
-  update(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
+  update(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void, faceData?: Point[], poseData?: Point[]) {
     if (this.state === 'CALIBRATING') {
       this.handleCalibration(handsData, ctx);
     } else if (this.state === 'WAITING') {
@@ -120,10 +175,10 @@ export class Player {
           this.handleTraceGame(handsData, ctx, onWin);
           break;
         case 'dodge':
-          this.handleDodgeGame(handsData, ctx, onWin);
+          this.handleDodgeGame(handsData, ctx, onWin, faceMeshToPoint(faceData));
           break;
         case 'sandbox':
-          this.handleSandboxMode(handsData, ctx);
+          this.handleSandboxMode(handsData, ctx, faceData, poseData);
           break;
       }
     } else if (this.state === 'LOSE') {
@@ -132,7 +187,7 @@ export class Player {
   }
 
   handleCalibration(handsData: Point[][], ctx: CanvasRenderingContext2D) {
-    // Shared Calibration: Frame Face
+    // Shared Calibration: Frame Face or Gesture
     ctx.save();
     ctx.fillStyle = this.color;
     ctx.shadowColor = this.color;
@@ -141,9 +196,9 @@ export class Player {
     ctx.textAlign = "center";
     const msgX = this.bounds.x + this.bounds.w / 2;
     
-    const showHeader = this.gameType === 'puzzle' || this.gameType === 'pop' || this.gameType === 'strike';
+    const isPuzzle = this.gameType === 'puzzle';
     
-    if (showHeader) {
+    if (isPuzzle) {
       ctx.fillText(this.translations.instructionHands.replace('{id}', this.id.toString()), msgX, 60);
       ctx.font = "20px sans-serif";
       ctx.shadowBlur = 5;
@@ -152,44 +207,50 @@ export class Player {
     } else {
        ctx.fillText(`${this.translations.instructionHands.replace('{id}', this.id.toString())}`, msgX, 60);
        ctx.font = "20px sans-serif";
-       ctx.fillText("Pinch both hands to start mission!", msgX, 100);
+       const gestureText = this.gameType === 'pop' ? "Thumbs Up 👍 to begin!" : "Open Palm ✋ to begin!";
+       ctx.fillText(gestureText, msgX, 100);
     }
     ctx.restore();
 
-    if (handsData.length >= 2) {
-      const hA = handsData[0];
-      const hB = handsData[1];
+    if (handsData.length > 0) {
+      if (isPuzzle && handsData.length >= 2) {
+        const hA = handsData[0];
+        const hB = handsData[1];
 
-      const leftHand = hA[0].x < hB[0].x ? hA : hB;
-      const rightHand = hA[0].x < hB[0].x ? hB : hA;
+        const leftHand = hA[0].x < hB[0].x ? hA : hB;
+        const rightHand = hA[0].x < hB[0].x ? hB : hA;
 
-      const pLeftThumb = leftHand[4];
-      const pRightIndex = rightHand[8];
+        const pLeftThumb = leftHand[4];
+        const pRightIndex = rightHand[8];
 
-      const left = Math.min(pLeftThumb.x, pRightIndex.x);
-      const right = Math.max(pLeftThumb.x, pRightIndex.x);
-      const top = Math.min(pLeftThumb.y, pRightIndex.y);
-      const bottom = Math.max(pLeftThumb.y, pRightIndex.y);
+        const left = Math.min(pLeftThumb.x, pRightIndex.x);
+        const right = Math.max(pLeftThumb.x, pRightIndex.x);
+        const top = Math.min(pLeftThumb.y, pRightIndex.y);
+        const bottom = Math.max(pLeftThumb.y, pRightIndex.y);
 
-      const w = right - left;
-      const h = bottom - top;
+        const w = right - left;
+        const h = bottom - top;
 
-      if (w > 50 && h > 50) {
-        this.box = { x: left, y: top, w: w, h: h };
+        if (w > 50 && h > 50) {
+          this.box = { x: left, y: top, w: w, h: h };
 
-        ctx.save();
-        ctx.strokeStyle = "white";
-        ctx.shadowColor = "white";
-        ctx.shadowBlur = 15;
-        ctx.lineWidth = 4;
-        ctx.strokeRect(this.box.x, this.box.y, this.box.w, this.box.h);
-        ctx.restore();
+          ctx.save();
+          ctx.strokeStyle = "white";
+          ctx.shadowColor = "white";
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = 4;
+          ctx.strokeRect(this.box.x, this.box.y, this.box.w, this.box.h);
+          ctx.restore();
 
-        const pinchLeft = this.getDistance(leftHand[4], leftHand[8]) < PINCH_THRESHOLD;
-        const pinchRight = this.getDistance(rightHand[4], rightHand[8]) < PINCH_THRESHOLD;
-
-        if (pinchLeft && pinchRight) {
-           this.initGame(ctx);
+          if (isPinching(leftHand) && isPinching(rightHand)) {
+            this.initGame(ctx);
+          }
+        }
+      } else if (!isPuzzle) {
+        const h = handsData[0];
+        const startGesture = this.gameType === 'pop' ? isThumbsUp(h) : (this.gameType === 'catch' || this.gameType === 'strike' || this.gameType === 'dodge' ? isOpenPalm(h) : true);
+        if (startGesture) {
+          this.initGame(ctx);
         }
       }
     }
@@ -216,266 +277,415 @@ export class Player {
   initPopGame() {
     this.targets = [];
     this.score = 0;
-    this.maxScore = 12;
-    for(let i=0; i<this.maxScore; i++) {
-        this.targets.push({
-            x: this.bounds.x + 100 + Math.random() * (this.bounds.w - 200),
-            y: 100 + Math.random() * (this.bounds.h - 200),
-            r: 30 + Math.random() * 20,
-            id: i,
-            alive: false
-        });
-    }
-    this.targets[0].alive = true;
+    this.maxScore = 15;
     this.startPlaying();
   }
 
   handlePopGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
-      this.updateTimer();
-      this.drawUI(ctx, `POPS: ${this.score} / ${this.maxScore}`);
+    this.updateTimer();
+    this.drawUI(ctx, `THUMBS UP TO POP: ${this.score} / ${this.maxScore}`);
 
-      let cursor: Point | null = null;
-      let pinching = false;
-
-      if (handsData.length > 0) {
-          const h = handsData[0];
-          cursor = { x: (h[4].x + h[8].x) / 2, y: (h[4].y + h[8].y) / 2 };
-          pinching = this.getDistance(h[4], h[8]) < PINCH_THRESHOLD;
-          this.drawCursor(ctx, cursor, pinching);
-      }
-
-      this.targets.forEach(t => {
-          if (!t.alive) return;
+    if (handsData.length > 0) {
+      const h = handsData[0];
+      if (isThumbsUp(h)) {
+        if (!this.isPinching) { // Reuse isPinching for debounce
+          this.isPinching = true;
+          this.score++;
           
-          ctx.save();
-          const pulse = Math.abs(Math.sin(Date.now() / 200)) * 10;
-          ctx.beginPath();
-          ctx.arc(t.x, t.y, t.r + pulse, 0, Math.PI * 2);
-          ctx.strokeStyle = this.color;
-          ctx.lineWidth = 3;
-          ctx.stroke();
-          
-          ctx.beginPath();
-          ctx.arc(t.x, t.y, t.r - 5, 0, Math.PI * 2);
-          ctx.fillStyle = this.color + "44";
-          ctx.fill();
-          ctx.restore();
-
-          if (cursor && (pinching || this.getDistance(cursor, t) < t.r)) {
-              t.alive = false;
-              this.score++;
-              if (this.score < this.maxScore) {
-                  this.targets[this.score].alive = true;
-              } else {
-                  this.state = 'SOLVED';
-                  onWin(this);
-              }
+          // Image capture for pop effect
+          const snapSize = 150;
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = snapSize;
+          tempCanvas.height = snapSize;
+          const tctx = tempCanvas.getContext('2d');
+          if (tctx) {
+            // Draw from video/main canvas if possible
+            tctx.drawImage(ctx.canvas, h[0].x - snapSize/2, h[0].y - snapSize/2, snapSize, snapSize, 0, 0, snapSize, snapSize);
           }
-      });
+
+          this.targets.push({
+            x: h[4].x,
+            y: h[4].y,
+            r: 60,
+            id: Date.now(),
+            alive: true,
+            capturedImage: tempCanvas.toDataURL(),
+            popProgress: 0
+          });
+
+          if (this.score >= this.maxScore) {
+            this.state = 'SOLVED';
+            onWin(this);
+          }
+        }
+      } else {
+        this.isPinching = false;
+      }
+    }
+
+    this.targets.forEach((t, idx) => {
+      if (t.alive) {
+        t.popProgress! += 0.04;
+        if (t.popProgress! >= 1) {
+          t.alive = false;
+          return;
+        }
+        
+        ctx.save();
+        ctx.globalAlpha = 1 - t.popProgress!;
+        const s = 1 + t.popProgress! * 0.8;
+        ctx.translate(t.x, t.y);
+        ctx.scale(s, s);
+        
+        if (t.capturedImage) {
+          const img = new Image();
+          img.src = t.capturedImage;
+          ctx.drawImage(img, -30, -30, 60, 60);
+        }
+        
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 4;
+        ctx.strokeRect(-30, -30, 60, 60);
+        ctx.restore();
+      }
+    });
   }
 
   initCatchGame() {
-      this.catchItems = [];
-      this.score = 0;
-      this.maxScore = 15;
-      this.startPlaying();
+    this.catchItems = [];
+    this.score = 0;
+    this.maxScore = 20;
+    this.startPlaying();
   }
 
   handleCatchGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
-      this.updateTimer();
-      this.drawUI(ctx, `COLLECTED: ${this.score} / ${this.maxScore}`);
+    this.updateTimer();
+    const currentSpeed = 5 + (this.score * 0.5);
+    this.drawUI(ctx, `PINCH TO CATCH: ${this.score} / ${this.maxScore}`);
 
-      if (Math.random() < 0.05 && this.catchItems.length < 5) {
-          this.catchItems.push({
-              x: this.bounds.x + 50 + Math.random() * (this.bounds.w - 100),
-              y: -50,
-              speed: 3 + Math.random() * 5,
-              id: Date.now()
-          });
-      }
-
-      let handCenter: Point | null = null;
-      if (handsData.length > 0) {
-          const h = handsData[0];
-          handCenter = h[9]; // Middle finger base
-      }
-
-      this.catchItems.forEach((item, idx) => {
-          item.y += item.speed;
-          
-          ctx.save();
-          ctx.translate(item.x, item.y);
-          ctx.rotate(Date.now() / 500);
-          ctx.strokeStyle = this.color;
-          ctx.lineWidth = 2;
-          ctx.strokeRect(-15, -15, 30, 30);
-          ctx.restore();
-
-          if (handCenter && this.getDistance(handCenter, item) < 60) {
-              this.catchItems.splice(idx, 1);
-              this.score++;
-              if (this.score >= this.maxScore) {
-                  this.state = 'SOLVED';
-                  onWin(this);
-              }
-          } else if (item.y > this.bounds.h + 50) {
-              this.catchItems.splice(idx, 1);
-          }
+    if (Math.random() < 0.04 + (this.score * 0.003) && this.catchItems.length < 10) {
+      this.catchItems.push({
+        x: this.bounds.x + 80 + Math.random() * (this.bounds.w - 160),
+        y: -100,
+        speed: currentSpeed + Math.random() * 3,
+        id: Date.now(),
+        size: 70 + Math.random() * 40
       });
+    }
+
+    let pCursor: Point | null = null;
+    let pinching = false;
+    if (handsData.length > 0) {
+      const h = handsData[0];
+      pCursor = { x: (h[4].x + h[8].x) / 2, y: (h[4].y + h[8].y) / 2 };
+      pinching = isPinching(h);
+      this.drawCursor(ctx, pCursor, pinching);
+    }
+
+    this.catchItems.forEach((item, idx) => {
+      item.y += item.speed;
+      
+      ctx.save();
+      ctx.translate(item.x, item.y);
+      ctx.rotate(Date.now() / 250);
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 4;
+      ctx.strokeRect(-item.size/2, -item.size/2, item.size, item.size);
+      ctx.fillStyle = this.color + "33";
+      ctx.fillRect(-item.size/2, -item.size/2, item.size, item.size);
+      ctx.restore();
+
+      if (pCursor && pinching && getDistance(pCursor, item) < item.size) {
+        this.catchItems.splice(idx, 1);
+        this.score++;
+        if (this.score >= this.maxScore) {
+          this.state = 'SOLVED';
+          onWin(this);
+        }
+      } else if (item.y > this.bounds.h + 150) {
+        this.catchItems.splice(idx, 1);
+      }
+    });
   }
 
   initStrikeGame() {
-      this.score = 0;
-      this.maxScore = 10;
-      this.activeSector = Math.floor(Math.random() * 9);
-      this.startPlaying();
+    this.score = 0;
+    this.maxScore = 20;
+    this.strikeTargets = [];
+    this.startPlaying();
   }
 
   handleStrikeGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
-      this.updateTimer();
-      this.drawUI(ctx, `STRIKES: ${this.score} / ${this.maxScore}`);
+    this.updateTimer();
+    this.drawUI(ctx, `STRIKE NODES: ${this.score} / ${this.maxScore}`);
 
-      const sectorW = this.bounds.w / 3;
-      const sectorH = this.bounds.h / 3;
+    if (Math.random() < 0.05 && this.strikeTargets.length < 6) {
+      this.strikeTargets.push({
+        sector: Math.floor(Math.random() * 9),
+        active: true,
+        startTime: Date.now()
+      });
+    }
 
-      for (let i = 0; i < 9; i++) {
-          const r = Math.floor(i / 3);
-          const c = i % 3;
-          const x = this.bounds.x + c * sectorW;
-          const y = r * sectorH;
+    const sectorW = this.bounds.w / 3;
+    const sectorH = this.bounds.h / 3;
 
-          ctx.save();
-          ctx.strokeStyle = i === this.activeSector ? this.color : "rgba(255,255,255,0.1)";
-          ctx.lineWidth = i === this.activeSector ? 4 : 1;
-          ctx.strokeRect(x + 10, y + 10, sectorW - 20, sectorH - 20);
-          if (i === this.activeSector) {
-              ctx.fillStyle = this.color + "22";
-              ctx.fillRect(x + 10, y + 10, sectorW - 20, sectorH - 20);
-          }
-          ctx.restore();
-      }
+    // Grid Visual
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 1;
+    for(let i=1; i<3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(this.bounds.x + i * sectorW, 0);
+      ctx.lineTo(this.bounds.x + i * sectorW, this.bounds.h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(this.bounds.x, i * sectorH);
+      ctx.lineTo(this.bounds.x + this.bounds.w, i * sectorH);
+      ctx.stroke();
+    }
 
-      if (handsData.length > 0) {
-          const h = handsData[0];
-          const tip = h[8];
-          const col = Math.floor((tip.x - this.bounds.x) / sectorW);
-          const row = Math.floor(tip.y / sectorH);
-          const sector = row * 3 + col;
-
-          if (sector === this.activeSector) {
-              this.score++;
-              this.activeSector = Math.floor(Math.random() * 9);
-              if (this.score >= this.maxScore) {
-                  this.state = 'SOLVED';
-                  onWin(this);
-              }
-          }
-      }
-  }
-
-  initTraceGame() {
-      this.score = 0;
-      this.tracePath = [];
-      const centerX = this.bounds.x + this.bounds.w / 2;
-      const centerY = this.bounds.h / 2;
-      const r = Math.min(this.bounds.w, this.bounds.h) * 0.3;
+    this.strikeTargets.forEach((t, idx) => {
+      const r = Math.floor(t.sector / 3);
+      const c = t.sector % 3;
+      const x = this.bounds.x + c * sectorW + sectorW / 2;
+      const y = r * sectorH + sectorH / 2;
       
-      for(let i=0; i<=20; i++) {
-          const angle = (i / 20) * Math.PI * 2;
-          this.tracePath.push({
-              x: centerX + Math.cos(angle) * r,
-              y: centerY + Math.sin(angle) * r
-          });
+      const life = (Date.now() - t.startTime) / 1800;
+      if (life > 1) {
+        this.strikeTargets.splice(idx, 1);
+        return;
       }
-      this.traceProgress = 0;
-      this.startPlaying();
-  }
-
-  handleTraceGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
-      this.updateTimer();
-      this.drawUI(ctx, `TRACING: ${Math.floor(this.traceProgress / this.tracePath.length * 100)}%`);
 
       ctx.save();
       ctx.beginPath();
-      ctx.moveTo(this.tracePath[0].x, this.tracePath[0].y);
-      this.tracePath.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.strokeStyle = "rgba(255,255,255,0.1)";
-      ctx.lineWidth = 10;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(this.tracePath[0].x, this.tracePath[0].y);
-      for(let i=0; i<=this.traceProgress; i++) {
-          ctx.lineTo(this.tracePath[i].x, this.tracePath[i].y);
-      }
+      ctx.arc(x, y, 50 * (1 - life), 0, Math.PI * 2);
       ctx.strokeStyle = this.color;
       ctx.lineWidth = 6;
       ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.arc(x, y, 25, 0, Math.PI * 2);
+      ctx.fillStyle = this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 10;
+      ctx.fill();
       ctx.restore();
 
       if (handsData.length > 0) {
-          const tip = handsData[0][8];
-          const target = this.tracePath[this.traceProgress];
-          if (this.getDistance(tip, target) < 40) {
-              this.traceProgress++;
-              if (this.traceProgress >= this.tracePath.length) {
-                  this.state = 'SOLVED';
-                  onWin(this);
-              }
+        const tip = handsData[0][8];
+        if (getDistance(tip, {x, y}) < 60) {
+          this.strikeTargets.splice(idx, 1);
+          this.score++;
+          if (this.score >= this.maxScore) {
+            this.state = 'SOLVED';
+            onWin(this);
           }
+        }
       }
+    });
+  }
+
+  initTraceGame() {
+    this.score = 0;
+    this.tracePath = [];
+    const centerX = this.bounds.x + this.bounds.w / 2;
+    const centerY = this.bounds.h / 2;
+    const r = Math.min(this.bounds.w, this.bounds.h) * 0.35;
+    
+    for(let i=0; i<=50; i++) {
+        const angle = (i / 50) * Math.PI * 2;
+        const offset = Math.sin(angle * 5) * 40;
+        this.tracePath.push({
+            x: centerX + Math.cos(angle) * (r + offset),
+            y: centerY + Math.sin(angle) * (r + offset)
+        });
+    }
+    this.traceProgress = 0;
+    this.startPlaying();
+  }
+
+  handleTraceGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
+    this.updateTimer();
+    this.drawUI(ctx, `STAY ON THE PATH: ${Math.floor(this.traceProgress / (this.tracePath.length-1) * 100)}%`);
+
+    ctx.save();
+    // Path Guide
+    ctx.beginPath();
+    ctx.moveTo(this.tracePath[0].x, this.tracePath[0].y);
+    this.tracePath.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.lineWidth = 30;
+    ctx.lineCap = "round";
+    ctx.stroke();
+
+    // Progress
+    if (this.traceProgress > 0) {
+      ctx.beginPath();
+      ctx.moveTo(this.tracePath[0].x, this.tracePath[0].y);
+      for(let i=0; i<=this.traceProgress; i++) {
+        ctx.lineTo(this.tracePath[i].x, this.tracePath[i].y);
+      }
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 10;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 15;
+      ctx.stroke();
+    }
+
+    const next = this.tracePath[this.traceProgress];
+    if (next) {
+      ctx.beginPath();
+      ctx.arc(next.x, next.y, 20 + Math.sin(Date.now() / 150) * 8, 0, Math.PI * 2);
+      ctx.fillStyle = this.color;
+      ctx.fill();
+    }
+    ctx.restore();
+
+    if (handsData.length > 0) {
+      const tip = handsData[0][8];
+      if (next && getDistance(tip, next) < 60) {
+        this.traceProgress++;
+        if (this.traceProgress >= this.tracePath.length) {
+          this.state = 'SOLVED';
+          onWin(this);
+        }
+      }
+    }
   }
 
   initDodgeGame() {
-      this.score = 0;
-      this.maxScore = 20; // survive 20s
-      this.startPlaying();
+    this.score = 0;
+    this.maxScore = 25;
+    this.lasers = [];
+    for(let i=0; i<3; i++) {
+      this.lasers.push({
+        y: Math.random() * this.bounds.h,
+        speed: 4 + Math.random() * 3,
+        direction: Math.random() > 0.5 ? 1 : -1,
+        gap: this.bounds.x + 50 + Math.random() * (this.bounds.w - 250)
+      });
+    }
+    this.startPlaying();
   }
 
-  handleDodgeGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
-      this.updateTimer();
-      this.drawUI(ctx, `SURVIVE: ${this.elapsedTime}s / ${this.maxScore}s`);
+  handleDodgeGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void, facePoint: Point | null) {
+    this.updateTimer();
+    this.drawUI(ctx, `DODGE LASERS (FACE): ${this.elapsedTime}s / ${this.maxScore}s`);
 
-      const time = Date.now() / 1000;
-      const laserX = this.bounds.x + this.bounds.w / 2 + Math.sin(time * 2) * (this.bounds.w / 2 - 50);
+    if (!facePoint) {
+      ctx.fillStyle = "rgba(255,0,0,0.5)";
+      ctx.fillRect(this.bounds.x, 0, this.bounds.w, this.bounds.h);
+      ctx.fillStyle = "white";
+      ctx.font = "bold 24px Orbitron";
+      ctx.textAlign = "center";
+      ctx.fillText("FACE NOT DETECTED!", this.bounds.x + this.bounds.w/2, this.bounds.h/2);
+      this.startTime = Date.now(); // Exploitation prevention: reset if face is hidden
+      return;
+    }
+
+    // Face visualization
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.4)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.arc(facePoint.x, facePoint.y, 40, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    this.lasers.forEach((l, idx) => {
+      l.y += l.speed * l.direction;
+      if (l.y < 50 || l.y > this.bounds.h - 50) l.direction *= -1;
 
       ctx.save();
+      ctx.shadowColor = "#FF3333";
+      ctx.shadowBlur = 25;
+      ctx.strokeStyle = "#FF3333";
+      ctx.lineWidth = 18;
+      
+      const gapWidth = 180;
       ctx.beginPath();
-      ctx.moveTo(laserX, 0);
-      ctx.lineTo(laserX, this.bounds.h);
-      ctx.strokeStyle = "#FF0000";
-      ctx.lineWidth = 4 + Math.sin(time * 10) * 2;
-      ctx.shadowColor = "#FF0000";
-      ctx.shadowBlur = 15;
+      ctx.moveTo(this.bounds.x, l.y);
+      ctx.lineTo(l.gap, l.y);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(l.gap + gapWidth, l.y);
+      ctx.lineTo(this.bounds.x + this.bounds.w, l.y);
       ctx.stroke();
       ctx.restore();
 
-      if (handsData.length > 0) {
-          const h = handsData[0];
-          const hit = h.some(p => Math.abs(p.x - laserX) < 20);
-          if (hit) {
-              this.startTime = Date.now(); // Reset time on hit
-          }
+      // Detection
+      const onLaserY = Math.abs(facePoint.y - l.y) < 25;
+      const inGap = facePoint.x > l.gap && facePoint.x < l.gap + gapWidth;
+      
+      if (onLaserY && !inGap) {
+        this.startTime = Date.now(); // Hit -> reset timer
       }
+    });
 
-      if (this.elapsedTime >= this.maxScore) {
-          this.state = 'SOLVED';
-          onWin(this);
-      }
+    if (this.elapsedTime >= this.maxScore) {
+      this.state = 'SOLVED';
+      onWin(this);
+    }
   }
 
-  handleSandboxMode(handsData: Point[][], ctx: CanvasRenderingContext2D) {
-      this.drawUI(ctx, "SANDBOX MODE - HAVE FUN");
+  handleSandboxMode(handsData: Point[][], ctx: CanvasRenderingContext2D, faceData?: Point[], poseData?: Point[]) {
+    this.drawUI(ctx, `CONTROL LAB: SELECT SENSOR`);
+    
+    const trackers: SandboxTracker[] = ['hands', 'face', 'pose'];
+    trackers.forEach((t, i) => {
+      const buttonW = 140;
+      const x = this.bounds.x + (this.bounds.w - (buttonW * 3 + 40)) / 2 + i * (buttonW + 20);
+      const y = this.bounds.h - 100;
+      const selected = this.sandboxTracker === t;
+      
+      ctx.save();
+      ctx.fillStyle = selected ? this.color : "rgba(255,255,255,0.1)";
+      ctx.shadowBlur = selected ? 15 : 0;
+      ctx.shadowColor = this.color;
+      ctx.roundRect(x, y, buttonW, 50, 10);
+      ctx.fill();
+      
+      ctx.fillStyle = selected ? "black" : "white";
+      ctx.font = "bold 14px Orbitron";
+      ctx.textAlign = "center";
+      ctx.fillText(t.toUpperCase(), x + buttonW/2, y + 32);
+      ctx.restore();
+
       if (handsData.length > 0) {
-          handsData.forEach(h => {
-             this.drawCursor(ctx, h[8], false);
-             // Leave trail
-             ctx.beginPath();
-             ctx.arc(h[8].x, h[8].y, 2, 0, Math.PI*2);
-             ctx.fillStyle = this.color;
-             ctx.fill();
-          });
+        const tip = handsData[0][8];
+        if (tip.x > x && tip.x < x + buttonW && tip.y > y && tip.y < y + 50) {
+          this.sandboxTracker = t;
+        }
       }
+    });
+
+    // Feedback
+    if (this.sandboxTracker === 'hands' && handsData.length > 0) {
+      handsData.forEach(h => {
+        h.forEach(p => {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+          ctx.fillStyle = this.color;
+          ctx.fill();
+        });
+      });
+    } else if (this.sandboxTracker === 'face' && faceData) {
+      faceData.forEach(p => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "cyan";
+        ctx.fill();
+      });
+    } else if (this.sandboxTracker === 'pose' && poseData) {
+      poseData.forEach(p => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = "white";
+        ctx.fill();
+      });
+    }
   }
 
   updateTimer() {

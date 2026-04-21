@@ -23,15 +23,15 @@ interface GameInfo {
 
 const TRANSLATIONS = {
   en: {
-    titlePart1: "YOUR FACE",
-    titlePart2: "PUZZLE",
+    titlePart1: "MOSTAPHA",
+    titlePart2: "MINI-GAMES",
     modeSingle: "SINGLE PLAYER",
     modeMulti: "MULTIPLAYER",
-    modeSingleDesc: "Solve the puzzle of your face as fast as possible.",
-    modeMultiDesc: "More fun with two players! Race to see who's fastest.",
+    modeSingleDesc: "Challenge yourself across various mini-games as fast as possible.",
+    modeMultiDesc: "Compete with a friend! Race to see who's the fastest.",
     howToPlayTitle: "How to play:",
-    howToPlayDesc: "Master your hand gestures to solve puzzles, catch nodes, and survive laser beams! <br/> <span class=\"text-white font-medium\">Pinch & move</span> to interact with the digital world.",
-    connectingCamera: "CONNECTING CAMERA...",
+    howToPlayDesc: "Master your hand gestures to solve puzzles, catch nodes, and survive laser beams! <br/> <span class=\"text-white font-medium underline\">Pinch, Move, and Gesture</span> to interact with the digital world.",
+    connectingCamera: "INITIALIZING SENSORS...",
     startGame: "START GAME",
     winTitleSingle: "MISSION COMPLETED!",
     winTitleMulti: "PLAYER {id} WINS!",
@@ -46,29 +46,67 @@ const TRANSLATIONS = {
     clubLabel: "Club"
   },
   ar: {
-    titlePart1: "لغز",
-    titlePart2: "وجهك",
-    modeSingle: "لاعب واحد",
-    modeMulti: "لاعبان",
-    modeSingleDesc: "حل لغز وجهك بأسرع ما يمكن.",
-    modeMultiDesc: "أكثر متعة مع لاعبين! تسابق لمعرفة من الأسرع.",
-    howToPlayTitle: "كيفية اللعب:",
-    howToPlayDesc: "أتقن إيماءات يدك لحل الألغاز، والتقاط العقد، والبقاء على قيد الحياة تحت أشعة الليزر! <br/> <span class=\"text-white font-medium\">اقرص وحرك</span> للتفاعل مع العالم الرقمي.",
-    connectingCamera: "جاري الاتصال بالكاميرا...",
-    startGame: "ابدأ اللعبة",
-    winTitleSingle: "تمت المهمة!",
-    winTitleMulti: "اللاعب {id} فاز!",
-    timeRecord: "سجل الوقت",
-    playAgain: "العب مرة أخرى",
-    instructionHands: "اللاعب {id}: ارفع يديك",
-    instructionBox: "شكل مربعاً بالسبابة والإبهام لتأطير وجهك.",
-    instructionSnap: "اقرص بكلتا يديك لالتقاط الصور!",
-    waitingOpponent: "بانتظار الخصم...",
-    timeLabel: "الوقت: ",
-    devLabel: "تطوير",
-    clubLabel: "نادي"
+	titlePart1: "ألعاب مصطفى",
+	titlePart2: "المصغّرة",
+	modeSingle: "لاعب واحد",
+	modeMulti: "لاعبان",
+	modeSingleDesc: "تحدَّ نفسك في مجموعة من الألعاب المصغّرة بأسرع وقت ممكن.",
+	modeMultiDesc: "تحدَّ صديقك! تسابقا لمعرفة من الأسرع.",
+	howToPlayTitle: "طريقة اللعب:",
+	howToPlayDesc: "أتقن حركات يدك لحل الألغاز، والتقاط العناصر، وتفادي أشعة الليزر! <br/> <span class=\"text-white font-medium underline\">اقرص، حرّك، وأشر</span> للتفاعل مع العالم الرقمي.",
+	connectingCamera: "جارٍ تهيئة المستشعرات...",
+	startGame: "ابدأ اللعب",
+	winTitleSingle: "تمت المهمة!",
+	winTitleMulti: "فاز اللاعب {id}!",
+	timeRecord: "الوقت المسجّل",
+	playAgain: "العب مرة أخرى",
+	instructionHands: "اللاعب {id}: ارفع يديك",
+	instructionBox: "كوّن مربعًا بالسبابة والإبهام لتأطير وجهك.",
+	instructionSnap: "اقرص بكلتا يديك لالتقاط صورة!",
+	waitingOpponent: "في انتظار الخصم...",
+	timeLabel: "الوقت:",
+	devLabel: "تطوير",
+	clubLabel: "نادي"
   }
 };
+
+function MouseTrail() {
+  const [trail, setTrail] = React.useState<{ x: number, y: number, id: string }[]>([]);
+
+  React.useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      setTrail(prev => {
+        const newPoint = { 
+          x: e.clientX, 
+          y: e.clientY, 
+          id: `${Date.now()}-${Math.random()}` 
+        };
+        return [...prev.slice(-12), newPoint];
+      });
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[1000]">
+      {trail.map((point, i) => (
+        <motion.div
+          key={point.id}
+          initial={{ scale: 1, opacity: 0.5 }}
+          animate={{ scale: 0, opacity: 0 }}
+          transition={{ duration: 0.5 }}
+          className="absolute w-4 h-4 rounded-full bg-cyan-400 blur-sm"
+          style={{ 
+            left: point.x - 8, 
+            top: point.y - 8,
+            opacity: (i + 1) / trail.length
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 
 export default function App() {
   const [language, setLanguage] = useState<Language>('en');
@@ -84,12 +122,12 @@ export default function App() {
 
   const games = useMemo<GameInfo[]>(() => [
     { id: 'puzzle', icon: <Gamepad className="w-6 h-6" />, title: language === 'en' ? 'FACE PUZZLE' : 'لغز الوجه', desc: language === 'en' ? 'Snapshot your face and solve the 3x3 puzzle.' : 'القط صورة لوجهك وحل لغز 3x3.', color: '#00FFFF' },
-    { id: 'pop', icon: <Camera className="w-6 h-6" />, title: language === 'en' ? 'QUANTUM POP' : 'فرقعة الكم', desc: language === 'en' ? 'Pinch or touch the glowing nodes as fast as possible.' : 'اقرص أو المس العقد المتوهجة بأسرع ما يمكن.', color: '#FF00FF' },
-    { id: 'catch', icon: <RefreshCw className="w-6 h-6" />, title: language === 'en' ? 'DIGITAL CATCH' : 'القبض الرقمي', desc: language === 'en' ? 'Move your hands to catch falling data nodes.' : 'حرك يديك لالتقاط عقد البيانات الساقطة.', color: '#FFFF00' },
-    { id: 'strike', icon: <Globe className="w-6 h-6" />, title: language === 'en' ? 'SECTOR STRIKE' : 'ضرب القطاع', desc: language === 'en' ? 'Strike the highlighted sectors of the grid.' : 'اضرب القطاعات المميزة في الشبكة.', color: '#00FF00' },
-    { id: 'trace', icon: <Languages className="w-6 h-6" />, title: language === 'en' ? 'NEON TRACE' : 'تتبع النيون', desc: language === 'en' ? 'Follow the neon path accurately with your finger.' : 'اتبع مسار النيون بدقة بإصبعك.', color: '#A020F0' },
-    { id: 'dodge', icon: <Trophy className="w-6 h-6" />, title: language === 'en' ? 'LASER DODGE' : 'تفادي الليزر', desc: language === 'en' ? 'Avoid the lethal red laser beams to survive.' : 'تجنب أشعة الليزر الحمراء القاتلة للبقاء على قيد الحياة.', color: '#FF0000' },
-    { id: 'sandbox', icon: <Globe className="w-6 h-6" />, title: language === 'en' ? 'SANDBOX' : 'صندوق الرمل', desc: language === 'en' ? 'Interact with particles in a free digital space.' : 'تفاعل مع الجسيمات في مساحة رقمية حرة.', color: '#0000FF' },
+    { id: 'pop', icon: <Camera className="w-6 h-6" />, title: language === 'en' ? 'QUANTUM POP' : 'فرقعة الكم', desc: language === 'en' ? 'Give a Thumbs Up to capture reality and pop artifacts.' : 'أعط إبهاماً للأعلى لالتقاط الواقع وتفجير القطع الأثرية.', color: '#FF00FF' },
+    { id: 'catch', icon: <RefreshCw className="w-6 h-6" />, title: language === 'en' ? 'DIGITAL CATCH' : 'القبض الرقمي', desc: language === 'en' ? 'Pinch to catch falling nodes. They get faster as you score!' : 'اقرص لالتقاط العقد الساقطة. تصبح أسرع كلما سجلت نقاطاً!', color: '#FFFF00' },
+    { id: 'strike', icon: <Globe className="w-6 h-6" />, title: language === 'en' ? 'SECTOR STRIKE' : 'ضرب القطاع', desc: language === 'en' ? 'Strike the highlighted nodes as they materialize in sectors.' : 'اضرب العقد المميزة عند ظهورها في القطاعات.', color: '#00FF00' },
+    { id: 'trace', icon: <Languages className="w-6 h-6" />, title: language === 'en' ? 'NEON TRACE' : 'تتبع النيون', desc: language === 'en' ? 'Stay on the moving neon path with extreme precision.' : 'ابق على مسار النيون المتحرك بدقة متناهية.', color: '#A020F0' },
+    { id: 'dodge', icon: <Trophy className="w-6 h-6" />, title: language === 'en' ? 'LASER DODGE' : 'تفادي الليزر', desc: language === 'en' ? 'Dodge lethal moving lasers using only your face.' : 'تفادى أشعة الليزر القاتلة باستخدام وجهك فقط.', color: '#FF0000' },
+    { id: 'sandbox', icon: <Globe className="w-6 h-6" />, title: language === 'en' ? 'CONTROL LAB' : 'مختبر التحكم', desc: language === 'en' ? 'Toggle between Hand, Face, and Pose tracking systems.' : 'بدل بين أنظمة تتبع اليد والوجه والوضعية.', color: '#0000FF' },
   ], [language]);
 
   const activeGame = useMemo(() => games.find(g => g.id === selectedGame) || games[0], [games, selectedGame]);
@@ -157,6 +195,15 @@ export default function App() {
         gameColor={activeGame.color}
       />
 
+      <MouseTrail />
+
+      {/* Decorative Background Effects */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-cyan-500/10 blur-[120px] rounded-full animate-pulse" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-pink-500/10 blur-[120px] rounded-full animate-pulse" style={{ animationDelay: '2s' }} />
+        <div className="absolute top-[30%] right-[10%] w-[20%] h-[20%] bg-purple-500/10 blur-[100px] rounded-full" />
+      </div>
+
       {/* Language Toggle Overlay (Top Right/Left) */}
       {!isPlaying && !winner && (
         <div className={`absolute top-6 ${isRTL ? 'left-6' : 'right-6'} z-[60]`}>
@@ -177,13 +224,14 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 flex flex-col items-center justify-start py-10 md:py-20 bg-[#050505]/95 backdrop-blur-sm overflow-y-auto scrollbar-hide"
+            className="absolute inset-0 z-50 flex flex-col items-center justify-start py-10 md:py-20 bg-[#050505]/95 backdrop-blur-xl overflow-y-auto scrollbar-hide"
           >
-            <div className="text-center mb-10">
-              <h1 className="text-5xl md:text-7xl font-tech font-black tracking-tight uppercase leading-none">
-                <span className="text-cyan-400 drop-shadow-[0_0_15px_rgba(0,255,255,0.8)]">{t.titlePart1}</span>
+            <div className="text-center mb-10 relative">
+              <div className="absolute -inset-8 bg-cyan-500/20 blur-3xl opacity-50 rounded-full" />
+              <h1 className="text-4xl md:text-7xl font-tech font-black tracking-tighter uppercase leading-[0.9] relative z-10">
+                <span className="text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">{t.titlePart1}</span>
                 <br />
-                <span className="text-pink-500 drop-shadow-[0_0_15px_rgba(255,0,255,0.8)]">{t.titlePart2}</span>
+                <span className="bg-gradient-to-r from-cyan-400 to-pink-500 bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]">{t.titlePart2}</span>
               </h1>
             </div>
 
@@ -258,63 +306,68 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-4 items-center">
+            <div className="flex flex-col gap-4 items-center pb-40">
               {!isCameraOn ? (
-                <div className="flex items-center gap-3 bg-white/10 text-white px-8 py-4 rounded-full border border-white/20 animate-pulse font-tech uppercase text-xs tracking-widest">
-                  <Camera className="w-5 h-5" />
+                <div className="flex items-center gap-3 bg-white/5 text-white px-8 py-4 rounded-xl border border-white/10 animate-pulse font-tech uppercase text-xs tracking-widest backdrop-blur-md">
+                  <Camera className="w-5 h-5 text-cyan-400" />
                   {t.connectingCamera}
                 </div>
               ) : (
                 <button
                   onClick={handleStartGame}
                   disabled={!selectedMode}
-                  className={`font-tech font-extrabold text-xl px-16 py-4 rounded-full transition-all duration-300 w-80 ${
+                  className={`font-tech font-extrabold text-xl px-16 py-4 rounded-xl transition-all duration-500 w-80 shadow-2xl ${
                     selectedMode 
-                      ? 'bg-white text-black btn-glow cursor-pointer' 
-                      : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white cursor-pointer hover:scale-105 active:scale-95 shadow-cyan-500/20' 
+                      : 'bg-white/5 text-gray-500 cursor-not-allowed border border-white/5'
                   }`}
                 >
                   {t.startGame}
                 </button>
               )}
             </div>
-
-            <div className="absolute bottom-8 flex flex-col items-center text-xs text-gray-500 font-tech tracking-widest gap-2">
-			  <p className="mb-1 opacity-50 uppercase text-[10px]">{t.devLabel}</p>
-
-			  <p className="text-white text-sm font-bold tracking-normal mb-1 uppercase">
-				Rahmani Mostapha
-			  </p>
-
-			  <p className="text-gray-400 font-medium mb-2 uppercase text-[10px]">
-				{t.clubLabel}: <span className="text-cyan-400">Quantum Code</span>
-			  </p>
-
-			  <div className="flex flex-col items-center gap-2 mt-2">
-				<a 
-				  href="https://instagram.com/itsmeokazaki"
-				  target="_blank"
-				  rel="noopener noreferrer"
-				  className="group flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-white/40 hover:text-cyan-300 hover:border-cyan-400/40 hover:bg-cyan-400/10 transition-all duration-300 hover:scale-105"
-				>
-				  <Instagram className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
-				  <span className="tracking-normal">@itsmeokazaki</span>
-				</a>
-
-				<a 
-				  href="https://instagram.com/qc__club"
-				  target="_blank"
-				  rel="noopener noreferrer"
-				  className="group flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-white/40 hover:text-pink-400 hover:border-pink-400/40 hover:bg-pink-400/10 transition-all duration-300 hover:scale-105"
-				>
-				  <Instagram className="w-4 h-4 group-hover:-rotate-12 transition-transform duration-300" />
-				  <span className="tracking-normal">@qc__club</span>
-				</a>
-			  </div>
-			</div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* FIXED Developer Social Section (Outside AnimatePresence to be always visible or just handled by high z-index) */}
+      {!isPlaying && !winner && (
+        <div className="fixed bottom-0 left-0 right-0 z-[100] flex flex-col items-center justify-center pb-6 pt-10 bg-gradient-to-t from-[#050505] via-[#050505]/80 to-transparent pointer-events-none">
+            <div className="flex flex-col items-center pointer-events-auto">
+              <p className="mb-1 opacity-50 uppercase text-[10px] font-tech text-gray-500 tracking-[0.3em]">{t.devLabel}</p>
+
+              <p className="text-white text-base font-tech font-bold tracking-wider mb-1 uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.2)]">
+                Rahmani Mostapha
+              </p>
+
+              <p className="text-gray-400 font-medium mb-3 uppercase text-[10px] font-tech">
+                {t.clubLabel}: <span className="text-cyan-400">Quantum Code</span>
+              </p>
+
+              <div className="flex items-center gap-4">
+                <a 
+                  href="https://instagram.com/itsmeokazaki"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-center gap-2 px-4 py-2 rounded-xl border border-white/5 bg-white/5 text-white/50 hover:text-cyan-400 hover:border-cyan-400/30 hover:bg-cyan-400/10 transition-all duration-300 hover:scale-105 backdrop-blur-md"
+                >
+                  <Instagram className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
+                  <span className="text-[10px] font-tech">@itsmeokazaki</span>
+                </a>
+
+                <a 
+                  href="https://instagram.com/qc__club"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-center gap-2 px-4 py-2 rounded-xl border border-white/5 bg-white/5 text-white/50 hover:text-pink-400 hover:border-pink-400/30 hover:bg-pink-400/10 transition-all duration-300 hover:scale-105 backdrop-blur-md"
+                >
+                  <Instagram className="w-4 h-4 group-hover:-rotate-12 transition-transform duration-300" />
+                  <span className="text-[10px] font-tech">@qc__club</span>
+                </a>
+              </div>
+            </div>
+        </div>
+      )}
 
       {/* Win Screen Overlay */}
       <AnimatePresence>

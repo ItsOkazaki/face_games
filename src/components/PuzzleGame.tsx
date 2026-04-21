@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Hands, Results, HAND_CONNECTIONS } from '@mediapipe/hands';
+import { Hands, Results as HandResults, HAND_CONNECTIONS } from '@mediapipe/hands';
+import { FaceMesh, Results as FaceResults } from '@mediapipe/face_mesh';
+import { Pose, Results as PoseResults } from '@mediapipe/pose';
 import { Camera } from '@mediapipe/camera_utils';
 import { Player, Point, COLOR_P1, COLOR_P2, Translations, GameType } from '../lib/puzzle-engine';
 
@@ -18,8 +20,15 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef<Player[]>([]);
   const handsRef = useRef<Hands | null>(null);
+  const faceMeshRef = useRef<FaceMesh | null>(null);
+  const poseRef = useRef<Pose | null>(null);
   const cameraRef = useRef<Camera | null>(null);
   const [isReady, setIsReady] = useState(false);
+
+  // Latest results
+  const latestHands = useRef<HandResults | null>(null);
+  const latestFace = useRef<FaceResults | null>(null);
+  const latestPose = useRef<PoseResults | null>(null);
 
   // Initialize players
   useEffect(() => {
@@ -69,21 +78,32 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     ctx.restore();
   }, []);
 
-  const onResults = useCallback((results: Results) => {
+  const runLoop = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d', { willReadFrequently: true });
+    if (!canvas || !ctx) return;
+
+    const handsResults = latestHands.current;
+    const faceResults = latestFace.current;
+    const poseResults = latestPose.current;
+
+    // We still need at least handsResults to get the base image for background
+    // but in sandbox it might be different. 
+    // Actually results.image is shared if they are from the same frame.
+    // For now, if no image, we skip.
+    const image = handsResults?.image || faceResults?.image || poseResults?.image;
+    if (!image) return;
+
     if (!isReady) {
       setIsReady(true);
       onCameraReady();
     }
 
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d', { willReadFrequently: true });
-    if (!canvas || !ctx) return;
-
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const canvasRatio = canvas.width / canvas.height;
-    const videoRatio = results.image.width / results.image.height;
+    const videoRatio = image.width / image.height;
     let dw, dh, dx, dy;
 
     if (canvasRatio > videoRatio) {
@@ -101,41 +121,55 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.filter = "brightness(0.5)";
-    ctx.drawImage(results.image, dx, dy, dw, dh);
+    ctx.drawImage(image, dx, dy, dw, dh);
     ctx.filter = "none";
     ctx.restore();
 
-    // Map landmarks
+    // Map landmarks helper
+    const mapLM = (lm: {x: number, y: number, z?: number}) => {
+      let x = lm.x * dw + dx;
+      const y = lm.y * dh + dy;
+      x = canvas.width - x;
+      return { x, y, z: lm.z };
+    };
+
+    // Map Hand landmarks
     const mappedHands: Point[][] = [];
-    if (results.multiHandLandmarks) {
-      for (const landmarks of results.multiHandLandmarks) {
-        const mapped = landmarks.map((lm) => {
-          let x = lm.x * dw + dx;
-          const y = lm.y * dh + dy;
-          x = canvas.width - x;
-          return { x, y, z: lm.z };
-        });
-        mappedHands.push(mapped);
+    if (handsResults?.multiHandLandmarks) {
+      for (const landmarks of handsResults.multiHandLandmarks) {
+        mappedHands.push(landmarks.map(mapLM));
       }
+    }
+
+    // Map Face landmarks
+    let mappedFace: Point[] = [];
+    if (faceResults?.multiFaceLandmarks?.[0]) {
+      mappedFace = faceResults.multiFaceLandmarks[0].map(mapLM);
+    }
+
+    // Map Pose landmarks
+    let mappedPose: Point[] = [];
+    if (poseResults?.poseLandmarks) {
+      mappedPose = poseResults.poseLandmarks.map(mapLM);
     }
 
     const players = playersRef.current;
     
-    // Draw central divider for multiplayer
-    if (mode === 'multi' && isActive) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-      ctx.shadowColor = "white";
-      ctx.shadowBlur = 10;
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(canvas.width / 2, 0);
-      ctx.lineTo(canvas.width / 2, canvas.height);
-      ctx.stroke();
-      ctx.restore();
-    }
-
     if (isActive && players.length > 0) {
+      // Divider
+      if (mode === 'multi') {
+        ctx.save();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+        ctx.shadowColor = "white";
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(canvas.width / 2, 0);
+        ctx.lineTo(canvas.width / 2, canvas.height);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       let p1Hands: Point[][] = [];
       let p2Hands: Point[][] = [];
 
@@ -152,24 +186,24 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
         });
       }
 
-      if (players[0]) players[0].update(p1Hands, ctx, onWin);
-      if (players[1]) players[1].update(p2Hands, ctx, onWin);
+      const p1Face = mode === 'single' ? mappedFace : (mappedFace.length > 0 && (mappedFace[1].x < canvas.width / 2) ? mappedFace : []);
+      const p2Face = mode === 'multi' && mappedFace.length > 0 && (mappedFace[1].x >= canvas.width / 2) ? mappedFace : [];
+      
+      const p1Pose = mode === 'single' ? mappedPose : (mappedPose.length > 0 && (mappedPose[0].x < canvas.width / 2) ? mappedPose : []);
+      const p2Pose = mode === 'multi' && mappedPose.length > 0 && (mappedPose[0].x >= canvas.width / 2) ? mappedPose : [];
 
-      // Synced start for multi
+      if (players[0]) players[0].update(p1Hands, ctx, onWin, p1Face, p1Pose);
+      if (players[1]) players[1].update(p2Hands, ctx, onWin, p2Face, p2Pose);
+
+      // Synced start
       if (mode === 'multi') {
         const bothReady = players.every(p => p.state !== 'CALIBRATING');
-        if (bothReady) {
-          players.forEach(p => {
-            if (p.state === 'WAITING') p.startPlaying();
-          });
-        }
+        if (bothReady) players.forEach(p => p.state === 'WAITING' && p.startPlaying());
       }
-    }
 
-    // Draw Skeletons
-    if (isActive && players.length > 0) {
+      // Draw Skeletons
       if (mode === 'single') {
-        mappedHands.forEach(hand => drawSkeleton(ctx, hand, COLOR_P1));
+        mappedHands.forEach(hand => drawSkeleton(ctx, hand, gameColor));
       } else {
         mappedHands.forEach(hand => {
           const avgX = hand.reduce((sum, lm) => sum + lm.x, 0) / hand.length;
@@ -180,37 +214,77 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     } else {
       mappedHands.forEach(hand => drawSkeleton(ctx, hand, "#FFFFFF"));
     }
-  }, [mode, isActive, isReady, onCameraReady, onWin, drawSkeleton]);
+  }, [mode, isActive, isReady, onCameraReady, onWin, drawSkeleton, gameColor]);
 
   useEffect(() => {
+    // Hands
     const hands = new Hands({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-      }
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
-
-    hands.setOptions({
-      maxNumHands: 4,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
-    });
-
-    hands.onResults(onResults);
+    hands.setOptions({ maxNumHands: 4, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    hands.onResults((results) => { latestHands.current = results; });
     handsRef.current = hands;
 
+    // Face Mesh
+    const faceMesh = new FaceMesh({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+    faceMesh.setOptions({ maxNumFaces: 2, refineLandmarks: true, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    faceMesh.onResults((results) => { latestFace.current = results; });
+    faceMeshRef.current = faceMesh;
+
+    // Pose
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+    pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    pose.onResults((results) => { latestPose.current = results; });
+    poseRef.current = pose;
+
+    let requestRef: number;
+    const animate = () => {
+      runLoop();
+      requestRef = requestAnimationFrame(animate);
+    };
+
     if (videoRef.current) {
-      const camera = new Camera(videoRef.current, {
-        onFrame: async () => {
+      try {
+        const camera = new Camera(videoRef.current, {
+          onFrame: async () => {
+            if (videoRef.current && videoRef.current.readyState >= 2) {
+              try {
+                await Promise.all([
+                  hands.send({ image: videoRef.current }),
+                  faceMesh.send({ image: videoRef.current }),
+                  pose.send({ image: videoRef.current })
+                ]);
+              } catch (e) {
+                console.warn("Mediapipe frame drop:", e);
+              }
+            }
+          },
+          // Using more standard dimensions or removing strictly forced 1280x720 
+          // which can fail on front-facing mobile cameras that only support 480p or 1080p
+          width: 640, 
+          height: 480
+        });
+        
+        camera.start().catch(err => {
+          console.error("Camera.start() failed:", err);
+          // Try one more time with zero constraints if previous failed
           if (videoRef.current) {
-            await hands.send({ image: videoRef.current });
+            navigator.mediaDevices.getUserMedia({ video: true })
+              .then(stream => {
+                if (videoRef.current) videoRef.current.srcObject = stream;
+              })
+              .catch(e => console.error("Ultimate camera fallback failed:", e));
           }
-        },
-        width: 1280,
-        height: 720
-      });
-      camera.start();
-      cameraRef.current = camera;
+        });
+        cameraRef.current = camera;
+        requestRef = requestAnimationFrame(animate);
+      } catch (err) {
+        console.error("Critical camera setup error:", err);
+      }
     }
 
     const handleResize = () => {
@@ -226,8 +300,11 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
       window.removeEventListener('resize', handleResize);
       cameraRef.current?.stop();
       handsRef.current?.close();
+      faceMeshRef.current?.close();
+      poseRef.current?.close();
+      cancelAnimationFrame(requestRef);
     };
-  }, [onResults]);
+  }, [runLoop]);
 
   return (
     <>

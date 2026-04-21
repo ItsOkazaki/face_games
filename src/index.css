@@ -6,10 +6,27 @@
   --font-tech: "Orbitron", sans-serif;
 }
 
+@layer base {
+  * {
+    @apply cursor-default selection:bg-cyan-500/30;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
 body {
   margin: 0;
   overflow: hidden;
   background-color: #050505;
+  color: white;
 }
 
 canvas {
