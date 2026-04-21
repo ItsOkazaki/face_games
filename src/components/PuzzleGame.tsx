@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Hands, Results as HandResults, HAND_CONNECTIONS } from '@mediapipe/hands';
 import { FaceMesh, Results as FaceResults } from '@mediapipe/face_mesh';
 import { Pose, Results as PoseResults } from '@mediapipe/pose';
-import { Camera } from '@mediapipe/camera_utils';
 import { Player, Point, COLOR_P1, COLOR_P2, Translations, GameType } from '../lib/puzzle-engine';
 
 interface PuzzleGameProps {
@@ -22,7 +21,6 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
   const handsRef = useRef<Hands | null>(null);
   const faceMeshRef = useRef<FaceMesh | null>(null);
   const poseRef = useRef<Pose | null>(null);
-  const cameraRef = useRef<Camera | null>(null);
   const [isReady, setIsReady] = useState(false);
 
   // Latest results
@@ -229,28 +227,63 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     }
   }, [mode, isReady, onCameraReady, onWin, drawSkeleton, gameColor]);
 
+  const [camError, setCamError] = useState<string | null>(null);
+  const processingRef = useRef(false);
+  const frameCountRef = useRef(0);
+
+  const startCamera = useCallback(async () => {
+    if (!videoRef.current) return;
+    setCamError(null);
+
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera API not supported in this browser.");
+      }
+
+      // Try basic constraints first
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 640 }, 
+          height: { ideal: 480 },
+          facingMode: "user"
+        } 
+      }).catch(() => navigator.mediaDevices.getUserMedia({ video: true }));
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        // Wait for video to be truly ready
+        await new Promise((resolve) => {
+          if (!videoRef.current) return resolve(null);
+          videoRef.current.onloadedmetadata = () => resolve(null);
+        });
+        await videoRef.current.play();
+        console.log("Cam started");
+      }
+    } catch (err: any) {
+      console.error("Cam error:", err);
+      setCamError(err.name === 'NotFoundError' ? "No camera found. Please connect a webcam." : "Camera blocked or unavailable.");
+    }
+  }, []);
+
   useEffect(() => {
-    // Hands
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
-    hands.setOptions({ maxNumHands: 4, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults((results) => { latestHands.current = results; });
     handsRef.current = hands;
 
-    // Face Mesh
     const faceMesh = new FaceMesh({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
-    faceMesh.setOptions({ maxNumFaces: 2, refineLandmarks: true, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     faceMesh.onResults((results) => { latestFace.current = results; });
     faceMeshRef.current = faceMesh;
 
-    // Pose
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
-    pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    pose.setOptions({ modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults((results) => { latestPose.current = results; });
     poseRef.current = pose;
 
@@ -258,70 +291,34 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     const animate = async () => {
       runLoop();
       
-      // If the official Camera utility failed or is missing, pump frames manually
-      if (!cameraRef.current && videoRef.current && videoRef.current.readyState >= 2) {
+      const video = videoRef.current;
+      if (video && video.readyState >= 2 && !processingRef.current) {
+        processingRef.current = true;
         try {
-          await Promise.all([
-            hands.send({ image: videoRef.current }),
-            faceMesh.send({ image: videoRef.current }),
-            pose.send({ image: videoRef.current })
-          ]);
+          // Sequential processing to save CPU and ensure stability
+          // Hands are highest priority for this app
+          await hands.send({ image: video });
+          
+          // Throttled face/pose to prevent UI lag
+          frameCountRef.current++;
+          if (frameCountRef.current % 2 === 0) {
+            await faceMesh.send({ image: video });
+          }
+          if (frameCountRef.current % 5 === 0) {
+            await pose.send({ image: video });
+          }
         } catch (e) {
-          // Ignore processing errors
+          console.error("Detection error:", e);
+        } finally {
+          processingRef.current = false;
         }
       }
       
       requestRef = requestAnimationFrame(animate);
     };
 
-    if (videoRef.current) {
-      try {
-        const camera = new Camera(videoRef.current, {
-          onFrame: async () => {
-            if (videoRef.current && videoRef.current.readyState >= 2) {
-              try {
-                await Promise.all([
-                  hands.send({ image: videoRef.current }),
-                  faceMesh.send({ image: videoRef.current }),
-                  pose.send({ image: videoRef.current })
-                ]);
-              } catch (e) {
-                // console.warn("Mediapipe frame drop:", e);
-              }
-            }
-          },
-          // No fixed width/height constraint - let the browser decide what's best for the device
-        });
-        
-        camera.start()
-          .then(() => {
-            cameraRef.current = camera;
-          })
-          .catch(err => {
-            console.error("Camera.start() failed:", err);
-            // Relaxed Fallback
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-              navigator.mediaDevices.getUserMedia({ 
-                video: true 
-              })
-              .then(stream => {
-                if (videoRef.current) {
-                  videoRef.current.srcObject = stream;
-                  videoRef.current.play().catch(pErr => console.error("Video play error:", pErr));
-                }
-              })
-              .catch(e => {
-                console.error("Final camera fallback failed:", e);
-                alert("CRITICAL: No camera device detected. Please ensure your camera is plugged in and accessible by the browser.");
-              });
-            }
-          });
-          
-        requestRef = requestAnimationFrame(animate);
-      } catch (err) {
-        console.error("Critical camera setup error:", err);
-      }
-    }
+    startCamera();
+    requestRef = requestAnimationFrame(animate);
 
     const handleResize = () => {
       if (canvasRef.current) {
@@ -334,13 +331,15 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      cameraRef.current?.stop();
-      handsRef.current?.close();
-      faceMeshRef.current?.close();
-      poseRef.current?.close();
+      if (videoRef.current?.srcObject) {
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+      }
+      hands.close();
+      faceMesh.close();
+      pose.close();
       cancelAnimationFrame(requestRef);
     };
-  }, [runLoop, onCameraReady, onWin, mode]);
+  }, [runLoop, startCamera]);
 
   return (
     <>
@@ -348,6 +347,7 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
         ref={videoRef}
         autoPlay
         playsInline
+        muted
         className="hidden"
       />
       <canvas
@@ -355,6 +355,21 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
         id="game-canvas"
         className="block w-screen h-screen object-cover"
       />
+      
+      {camError && (
+        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-black/90 backdrop-blur-md p-6 text-center">
+          <div className="bg-red-500/20 border border-red-500/50 p-8 rounded-3xl max-w-md">
+            <h3 className="text-red-400 font-tech text-2xl font-bold mb-4 uppercase tracking-wider">Sensor Error</h3>
+            <p className="text-white/80 mb-8 font-tech text-sm leading-relaxed">{camError}</p>
+            <button 
+              onClick={() => startCamera()}
+              className="bg-white text-black font-tech font-black px-10 py-4 rounded-full hover:bg-gray-100 transition-all uppercase tracking-widest"
+            >
+              Retry Connection
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
