@@ -1,0 +1,6 @@
+{
+  "name": "Your Face Puzzle",
+  "description": "A hand-controlled puzzle game where you use your face as the puzzle. Snapshot your face and arrange the pieces using hand gestures.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["hand-tracking", "camera-interaction"]
+}
