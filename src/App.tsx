@@ -279,15 +279,39 @@ export default function App() {
               )}
             </div>
 
-            <div className="absolute bottom-8 flex flex-col items-center text-xs text-gray-500 font-tech tracking-widest">
-              <p className="mb-1 opacity-50 uppercase text-[10px]">{t.devLabel}</p>
-              <p className="text-white text-sm font-bold tracking-normal mb-1 uppercase">Rahmani Mostapha</p>
-              <p className="text-gray-400 font-medium mb-3 uppercase text-[10px]">{t.clubLabel}: <span className="text-cyan-400">Quantum Code</span></p>
-              <a href="#" className="flex items-center gap-2 text-white/40 hover:text-cyan-300 transition-colors">
-                <Instagram className="w-4 h-4" />
-                @ronaldohauw
-              </a>
-            </div>
+            <div className="absolute bottom-8 flex flex-col items-center text-xs text-gray-500 font-tech tracking-widest gap-2">
+			  <p className="mb-1 opacity-50 uppercase text-[10px]">{t.devLabel}</p>
+
+			  <p className="text-white text-sm font-bold tracking-normal mb-1 uppercase">
+				Rahmani Mostapha
+			  </p>
+
+			  <p className="text-gray-400 font-medium mb-2 uppercase text-[10px]">
+				{t.clubLabel}: <span className="text-cyan-400">Quantum Code</span>
+			  </p>
+
+			  <div className="flex flex-col items-center gap-2 mt-2">
+				<a 
+				  href="https://instagram.com/itsmeokazaki"
+				  target="_blank"
+				  rel="noopener noreferrer"
+				  className="group flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-white/40 hover:text-cyan-300 hover:border-cyan-400/40 hover:bg-cyan-400/10 transition-all duration-300 hover:scale-105"
+				>
+				  <Instagram className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
+				  <span className="tracking-normal">@itsmeokazaki</span>
+				</a>
+
+				<a 
+				  href="https://instagram.com/qc__club"
+				  target="_blank"
+				  rel="noopener noreferrer"
+				  className="group flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-white/40 hover:text-pink-400 hover:border-pink-400/40 hover:bg-pink-400/10 transition-all duration-300 hover:scale-105"
+				>
+				  <Instagram className="w-4 h-4 group-hover:-rotate-12 transition-transform duration-300" />
+				  <span className="tracking-normal">@qc__club</span>
+				</a>
+			  </div>
+			</div>
           </motion.div>
         )}
       </AnimatePresence>
