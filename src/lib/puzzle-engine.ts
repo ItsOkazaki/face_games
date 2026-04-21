@@ -45,7 +45,7 @@ export interface Translations {
   timeLabel: string;
 }
 
-export type GameType = 'puzzle' | 'pop' | 'trace' | 'catch' | 'strike' | 'dodge' | 'sandbox';
+export type GameType = 'puzzle' | 'pop' | 'trace' | 'catch' | 'strike' | 'dodge' | 'sandbox' | 'pong' | 'snake' | 'slice';
 export type SandboxTracker = 'hands' | 'face' | 'pose';
 
 export interface Target {
@@ -56,6 +56,9 @@ export interface Target {
   alive: boolean;
   capturedImage?: string;
   popProgress?: number;
+  vx?: number;
+  vy?: number;
+  type?: string;
 }
 
 export interface CatchItem {
@@ -143,6 +146,18 @@ export class Player {
   // Sandbox state
   sandboxTracker: SandboxTracker = 'hands';
 
+  // NEW: Pong state
+  paddleY: number = 0;
+  ball: { x: number; y: number; vx: number; vy: number; r: number } = { x: 0, y: 0, vx: 0, vy: 0, r: 10 };
+
+  // NEW: Snake state
+  snakePath: Point[] = [];
+  snakeFood: Point = { x: 0, y: 0 };
+  snakeDir: { x: number; y: number } = { x: 1, y: 0 };
+
+  // NEW: Slice state
+  slicerPath: Point[] = [];
+
   constructor(id: number, bounds: Bounds, color: string, mode: 'single' | 'multi', translations: Translations, gameType: GameType = 'puzzle') {
     this.id = id;
     this.bounds = bounds;
@@ -179,6 +194,15 @@ export class Player {
           break;
         case 'sandbox':
           this.handleSandboxMode(handsData, ctx, faceData, poseData, onTrackerChange);
+          break;
+        case 'pong':
+          this.handlePongGame(handsData, ctx, onWin);
+          break;
+        case 'snake':
+          this.handleSnakeGame(handsData, ctx, onWin);
+          break;
+        case 'slice':
+          this.handleSliceGame(handsData, ctx, onWin);
           break;
       }
     } else if (this.state === 'LOSE') {
@@ -271,6 +295,12 @@ export class Player {
       this.initDodgeGame();
     } else if (this.gameType === 'sandbox') {
       this.startPlaying();
+    } else if (this.gameType === 'pong') {
+      this.initPongGame();
+    } else if (this.gameType === 'snake') {
+      this.initSnakeGame();
+    } else if (this.gameType === 'slice') {
+      this.initSliceGame();
     }
   }
 
@@ -691,6 +721,242 @@ export class Player {
     }
   }
 
+  // --- NEW HANDLERS ---
+
+  initPongGame() {
+    this.score = 0;
+    this.maxScore = 15;
+    this.ball = {
+      x: this.bounds.x + this.bounds.w / 2,
+      y: this.bounds.h / 2,
+      vx: 6 * (Math.random() > 0.5 ? 1 : -1),
+      vy: 4 * (Math.random() > 0.5 ? 1 : -1),
+      r: 12
+    };
+    this.startPlaying();
+  }
+
+  handlePongGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
+    this.updateTimer();
+    this.drawUI(ctx, `NEON PONG: ${this.score} / ${this.maxScore}`);
+
+    if (handsData.length > 0) {
+      const h = handsData[0];
+      const avgY = h.reduce((sum, p) => sum + p.y, 0) / h.length;
+      this.paddleY = avgY;
+    }
+
+    const paddleW = 15;
+    const paddleH = 120;
+    const paddleX = this.id === 1 ? this.bounds.x + 20 : this.bounds.x + this.bounds.w - 35;
+
+    if (this.paddleY < paddleH/2 + 60) this.paddleY = paddleH/2 + 60;
+    if (this.paddleY > this.bounds.h - paddleH/2) this.paddleY = this.bounds.h - paddleH/2;
+
+    ctx.save();
+    ctx.fillStyle = this.color;
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = this.color;
+    ctx.fillRect(paddleX, this.paddleY - paddleH / 2, paddleW, paddleH);
+    ctx.restore();
+
+    this.ball.x += this.ball.vx;
+    this.ball.y += this.ball.vy;
+
+    if (this.ball.y < 80 || this.ball.y > this.bounds.h - 20) this.ball.vy *= -1;
+
+    if (this.ball.x < paddleX + paddleW && this.ball.x > paddleX && Math.abs(this.ball.y - this.paddleY) < paddleH / 2) {
+      if ((this.ball.vx < 0 && this.id === 1) || (this.ball.vx > 0 && this.id === 2)) {
+        this.ball.vx *= -1.05;
+        this.score++;
+      }
+    }
+
+    if (this.mode === 'single') {
+       const oppX = this.bounds.x + this.bounds.w - 35;
+       if (this.ball.x > oppX) {
+         this.ball.vx *= -1;
+       }
+    }
+
+    if (this.ball.x < this.bounds.x - 50 || this.ball.x > this.bounds.x + this.bounds.w + 50) {
+       this.initPongGame();
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(this.ball.x, this.ball.y, this.ball.r, 0, Math.PI * 2);
+    ctx.fillStyle = "white";
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = "white";
+    ctx.fill();
+    ctx.restore();
+
+    if (this.score >= this.maxScore) {
+      this.state = 'SOLVED';
+      onWin(this);
+    }
+  }
+
+  initSnakeGame() {
+    this.score = 0;
+    this.maxScore = 20;
+    this.snakePath = [{ x: this.bounds.x + this.bounds.w / 2, y: this.bounds.h / 2 }];
+    for (let i = 0; i < 15; i++) this.snakePath.push({ ...this.snakePath[0] });
+    this.snakeFood = { 
+        x: this.bounds.x + 100 + Math.random() * (this.bounds.w - 200), 
+        y: 100 + Math.random() * (this.bounds.h - 200) 
+    };
+    this.startPlaying();
+  }
+
+  handleSnakeGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
+    this.updateTimer();
+    this.drawUI(ctx, `CYBER SNAKE: ${this.score} / ${this.maxScore}`);
+
+    if (handsData.length > 0) {
+      const h = handsData[0];
+      const tip = h[8];
+      const centerX = this.bounds.x + this.bounds.w / 2;
+      const centerY = this.bounds.h / 2;
+      const dx = tip.x - centerX;
+      const dy = tip.y - centerY;
+      const mag = Math.sqrt(dx*dx + dy*dy);
+      if (mag > 40) {
+        this.snakeDir = { x: dx / mag, y: dy / mag };
+      }
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.lineTo(centerX + this.snakeDir.x * 50, centerY + this.snakeDir.y * 50);
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    const head = { ...this.snakePath[0] };
+    const speed = 7 + (this.score * 0.2);
+    head.x += this.snakeDir.x * speed;
+    head.y += this.snakeDir.y * speed;
+
+    this.snakePath.unshift(head);
+    if (this.snakePath.length > 20 + this.score * 5) this.snakePath.pop();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(this.snakeFood.x, this.snakeFood.y, 14, 0, Math.PI * 2);
+    ctx.fillStyle = "#FF00FF";
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#FF00FF";
+    ctx.fill();
+    ctx.restore();
+
+    if (this.getDistance(head, this.snakeFood) < 40) {
+      this.score++;
+      this.snakeFood = { 
+        x: this.bounds.x + 100 + Math.random() * (this.bounds.w - 200), 
+        y: 100 + Math.random() * (this.bounds.h - 200) 
+      };
+      if (this.score >= this.maxScore) {
+        this.state = 'SOLVED';
+        onWin(this);
+      }
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(this.snakePath[0].x, this.snakePath[0].y);
+    this.snakePath.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 14;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    ctx.restore();
+
+    if (head.x < this.bounds.x || head.x > this.bounds.x + this.bounds.w || head.y < 80 || head.y > this.bounds.h - 20) {
+       this.initSnakeGame();
+    }
+  }
+
+  initSliceGame() {
+    this.score = 0;
+    this.maxScore = 25;
+    this.targets = [];
+    this.slicerPath = [];
+    this.startPlaying();
+  }
+
+  handleSliceGame(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
+    this.updateTimer();
+    this.drawUI(ctx, `FRUIT SLICER: ${this.score} / ${this.maxScore}`);
+
+    if (Math.random() < 0.05 && this.targets.length < 6) {
+      this.targets.push({
+        x: this.bounds.x + 150 + Math.random() * (this.bounds.w - 300),
+        y: this.bounds.h + 50,
+        vx: (Math.random() - 0.5) * 8,
+        vy: -18 - Math.random() * 10,
+        r: 35 + Math.random() * 20,
+        id: Date.now(),
+        alive: true
+      });
+    }
+
+    if (handsData.length > 0) {
+       const tip = handsData[0][8];
+       this.slicerPath.push(tip);
+       if (this.slicerPath.length > 10) this.slicerPath.shift();
+
+       if (this.slicerPath.length > 2) {
+         ctx.save();
+         ctx.beginPath();
+         ctx.moveTo(this.slicerPath[0].x, this.slicerPath[0].y);
+         this.slicerPath.forEach(p => ctx.lineTo(p.x, p.y));
+         ctx.strokeStyle = "white";
+         ctx.lineWidth = 10;
+         ctx.lineCap = "round";
+         ctx.shadowBlur = 10;
+         ctx.shadowColor = "white";
+         ctx.stroke();
+         ctx.restore();
+       }
+    }
+
+    this.targets.forEach((t, idx) => {
+      t.x += t.vx!;
+      t.y += t.vy!;
+      t.vy! += 0.45;
+
+      if (t.alive) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+        ctx.fill();
+        ctx.restore();
+
+        if (this.slicerPath.length >= 2) {
+           const tip = this.slicerPath[this.slicerPath.length - 1];
+           const prev = this.slicerPath[this.slicerPath.length - 2];
+           const dist = this.getDistance(tip, t);
+           if (dist < t.r + 10) {
+             const velocity = this.getDistance(tip, prev);
+             if (velocity > 15) {
+               t.alive = false;
+               this.score++;
+               if (this.score >= this.maxScore) {
+                 this.state = 'SOLVED';
+                 onWin(this);
+               }
+             }
+           }
+        }
+      }
+      if (t.y > this.bounds.h + 100) this.targets.splice(idx, 1);
+    });
+  }
+
   updateTimer() {
     if (this.startTime) {
         this.elapsedTime = Math.floor((Date.now() - this.startTime) / 1000);
@@ -738,22 +1004,16 @@ export class Player {
     for (let i = 0; i < 9; i++) {
       const row = Math.floor(i / 3);
       const col = i % 3;
-
       const pX = this.box.x + col * pieceW;
       const pY = this.box.y + row * pieceH;
-
       this.slots.push({ x: pX, y: pY, w: pieceW, h: pieceH });
-
       const pieceCanvas = document.createElement('canvas');
       pieceCanvas.width = pieceW;
       pieceCanvas.height = pieceH;
       pieceCanvas.getContext('2d')?.drawImage(tempCanvas, col * pieceW, row * pieceH, pieceW, pieceH, 0, 0, pieceW, pieceH);
-
       this.pieces.push({ id: i, currentSlot: i, image: pieceCanvas, drawX: pX, drawY: pY });
     }
-
     this.shufflePuzzle();
-
     if (this.mode === 'multi') {
       this.state = 'WAITING';
     } else {
@@ -791,7 +1051,6 @@ export class Player {
       ctx.lineWidth = 1;
       ctx.strokeRect(p.drawX, p.drawY, p.image.width, p.image.height);
     });
-
     if (!isLose) {
       ctx.save();
       ctx.fillStyle = this.color;
@@ -805,54 +1064,20 @@ export class Player {
   }
 
   handleGameplay(handsData: Point[][], ctx: CanvasRenderingContext2D, onWin: (player: Player) => void) {
-    // Update timer
-    if (this.startTime) {
-      this.elapsedTime = Math.floor((Date.now() - this.startTime) / 1000);
-    }
-
-    // Grid Background
+    this.updateTimer();
     ctx.save();
     ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
     ctx.lineWidth = 1;
     this.slots.forEach(slot => ctx.strokeRect(slot.x, slot.y, slot.w, slot.h));
     ctx.restore();
-
     let cursor: Point | null = null;
     let pinching = false;
-
     if (handsData.length > 0) {
       const h = handsData[0];
       cursor = { x: (h[4].x + h[8].x) / 2, y: (h[4].y + h[8].y) / 2 };
       pinching = this.getDistance(h[4], h[8]) < PINCH_THRESHOLD;
-
-      ctx.save();
-      const pulse = pinching ? Math.abs(Math.sin(Date.now() / 120)) * 6 : 0;
-      const radius = pinching ? 12 + pulse : 8;
-
-      ctx.fillStyle = pinching ? this.color : "rgba(255, 255, 255, 0.8)";
-      ctx.shadowColor = pinching ? this.color : "white";
-      ctx.shadowBlur = pinching ? 20 + pulse * 2 : 10;
-
-      if (pinching) {
-        ctx.strokeStyle = this.color;
-        ctx.lineWidth = 4 + pulse / 2;
-        ctx.beginPath();
-        ctx.moveTo(h[4].x, h[4].y);
-        ctx.lineTo(h[8].x, h[8].y);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(cursor.x, cursor.y, radius + 10, 0, Math.PI * 2);
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-
-      ctx.beginPath();
-      ctx.arc(cursor.x, cursor.y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+      this.drawCursor(ctx, cursor, pinching);
     }
-
     if (pinching && !this.isPinching) {
       this.isPinching = true;
       if (cursor && this.heldPieceIndex === -1) {
@@ -878,7 +1103,6 @@ export class Player {
         const heldPiece = this.pieces[this.heldPieceIndex];
         let targetSlotIndex = -1;
         let minDist = Infinity;
-
         for (let i = 0; i < this.slots.length; i++) {
           const slot = this.slots[i];
           const cx = slot.x + slot.w / 2;
@@ -886,7 +1110,6 @@ export class Player {
           const dist = this.getDistance(cursor, { x: cx, y: cy });
           if (dist < minDist) { minDist = dist; targetSlotIndex = i; }
         }
-
         if (targetSlotIndex !== -1 && targetSlotIndex !== heldPiece.currentSlot) {
           const pieceInTarget = this.pieces.find(p => p.currentSlot === targetSlotIndex);
           if (pieceInTarget) {
@@ -895,14 +1118,11 @@ export class Player {
           }
           heldPiece.currentSlot = targetSlotIndex;
         }
-
         this.snapToSlot(heldPiece);
         this.heldPieceIndex = -1;
         this.checkWin(onWin);
       }
     }
-
-    // Render Pieces
     this.pieces.forEach((p, idx) => {
       if (idx !== this.heldPieceIndex) {
         ctx.drawImage(p.image, p.drawX, p.drawY);
@@ -910,14 +1130,11 @@ export class Player {
         ctx.strokeRect(p.drawX, p.drawY, p.image.width, p.image.height);
       }
     });
-
-    // Render Held Piece
     if (this.heldPieceIndex !== -1) {
       const p = this.pieces[this.heldPieceIndex];
       ctx.globalAlpha = 0.85;
       ctx.drawImage(p.image, p.drawX, p.drawY);
       ctx.globalAlpha = 1.0;
-
       ctx.save();
       const pulseGlow = Math.abs(Math.sin(Date.now() / 150)) * 15;
       ctx.strokeStyle = this.color;
@@ -927,8 +1144,6 @@ export class Player {
       ctx.strokeRect(p.drawX, p.drawY, p.image.width, p.image.height);
       ctx.restore();
     }
-
-    // Timer
     ctx.save();
     ctx.fillStyle = this.color;
     ctx.shadowColor = this.color;

@@ -130,6 +130,9 @@ export default function App() {
     { id: 'strike', icon: <Globe className="w-6 h-6" />, title: language === 'en' ? 'SECTOR STRIKE' : 'ضرب القطاع', desc: language === 'en' ? 'Strike the highlighted nodes as they materialize in sectors.' : 'اضرب العقد المميزة عند ظهورها في القطاعات.', color: '#00FF00' },
     { id: 'trace', icon: <Languages className="w-6 h-6" />, title: language === 'en' ? 'NEON TRACE' : 'تتبع النيون', desc: language === 'en' ? 'Stay on the moving neon path with extreme precision.' : 'ابق على مسار النيون المتحرك بدقة متناهية.', color: '#A020F0' },
     { id: 'dodge', icon: <Trophy className="w-6 h-6" />, title: language === 'en' ? 'LASER DODGE' : 'تفادي الليزر', desc: language === 'en' ? 'Dodge lethal moving lasers using only your face.' : 'تفادى أشعة الليزر القاتلة باستخدام وجهك فقط.', color: '#FF0000' },
+    { id: 'pong', icon: <Gamepad className="w-6 h-6" />, title: language === 'en' ? 'NEON PONG' : 'بونج النيون', desc: language === 'en' ? 'Master the paddle! Move your hand vertically to bounce the ball.' : 'أتقن المضرب! حرك يدك عمودياً لترتد الكرة.', color: '#00BFFF' },
+    { id: 'snake', icon: <Globe className="w-6 h-6" />, title: language === 'en' ? 'CYBER SNAKE' : 'الثعبان السيبراني', desc: language === 'en' ? 'Direct the neon snake by moving your hand relative to center.' : 'وجه الثعبان النيوني بتحريك يدك بالنسبة للمركز.', color: '#32CD32' },
+    { id: 'slice', icon: <Trophy className="w-6 h-6" />, title: language === 'en' ? 'FRUIT SLICER' : 'قاطع الفاكهة', desc: language === 'en' ? 'Swipe with velocity to slice through digital objects.' : 'مرر بسرعة للتقطيع عبر الأجسام الرقمية.', color: '#FFA500' },
     { id: 'sandbox', icon: <Globe className="w-6 h-6" />, title: language === 'en' ? 'CONTROL LAB' : 'مختبر التحكم', desc: language === 'en' ? 'Toggle between Hand, Face, and Pose tracking systems.' : 'بدل بين أنظمة تتبع اليد والوجه والوضعية.', color: '#0000FF' },
   ], [language]);
 
