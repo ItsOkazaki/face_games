@@ -272,8 +272,8 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
     hands.setOptions({ 
-      maxNumHands: mode === 'single' ? 1 : 2, 
-      modelComplexity: 0, 
+      maxNumHands: mode === 'single' ? 2 : 4, 
+      modelComplexity: 1, 
       minDetectionConfidence: 0.5, 
       minTrackingConfidence: 0.5 
     });
@@ -285,7 +285,7 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
     });
     faceMesh.setOptions({ 
       maxNumFaces: 1, 
-      refineLandmarks: false, 
+      refineLandmarks: true, 
       minDetectionConfidence: 0.5, 
       minTrackingConfidence: 0.5 
     });
@@ -296,7 +296,7 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
     pose.setOptions({ 
-      modelComplexity: 0, 
+      modelComplexity: 1, 
       minDetectionConfidence: 0.5, 
       minTrackingConfidence: 0.5 
     });
@@ -311,10 +311,20 @@ export default function PuzzleGame({ mode, onWin, onCameraReady, isActive, trans
       if (video && video.readyState >= 2 && !processingRef.current) {
         processingRef.current = true;
         try {
-          // Dynamic sensor activation based on current props (avoiding effect restart)
-          const needsHands = gameType !== 'dodge' || (gameType === 'sandbox' && sandboxTracker === 'hands');
-          const needsFace = gameType === 'puzzle' || gameType === 'dodge' || (gameType === 'sandbox' && sandboxTracker === 'face');
-          const needsPose = gameType === 'sandbox' && sandboxTracker === 'pose';
+          // Dynamic sensor activation: ONLY process what is needed for the current game
+          let needsHands = false;
+          let needsFace = false;
+          let needsPose = false;
+
+          if (gameType === 'sandbox') {
+            needsHands = sandboxTracker === 'hands';
+            needsFace = sandboxTracker === 'face';
+            needsPose = sandboxTracker === 'pose';
+          } else {
+            needsHands = gameType !== 'dodge';
+            needsFace = gameType === 'puzzle' || gameType === 'dodge';
+            needsPose = false;
+          }
 
           const tasks = [];
           if (needsHands) tasks.push(hands.send({ image: video }));
